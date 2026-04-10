@@ -2,6 +2,7 @@ from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import DbSession
 from app.engine.mentor import MentorEngine
@@ -23,6 +24,78 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     conversation_id: int
     response: str
+
+
+class MessageResponse(BaseModel):
+    role: str
+    content: str
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationSummary(BaseModel):
+    id: int
+    mode: str
+    channel: str
+    preview: str
+    message_count: int
+    started_at: str
+    last_message_at: str
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationDetail(BaseModel):
+    id: int
+    mode: str
+    channel: str
+    messages: list[MessageResponse]
+
+    model_config = {"from_attributes": True}
+
+
+@router.get("/{user_id}/conversations", response_model=list[ConversationSummary])
+async def list_conversations(user_id: int, db: DbSession):
+    """List all conversations for a user, most recent first."""
+    result = await db.execute(
+        select(Conversation)
+        .options(selectinload(Conversation.messages))
+        .where(Conversation.user_id == user_id)
+        .order_by(Conversation.last_message_at.desc())
+    )
+    conversations = result.scalars().all()
+
+    summaries = []
+    for conv in conversations:
+        first_user_msg = next((m for m in conv.messages if m.role == "user"), None)
+        preview = (first_user_msg.content[:80] + "...") if first_user_msg and len(first_user_msg.content) > 80 else (first_user_msg.content if first_user_msg else "")
+        summaries.append(ConversationSummary(
+            id=conv.id,
+            mode=conv.mode,
+            channel=conv.channel,
+            preview=preview,
+            message_count=len(conv.messages),
+            started_at=conv.started_at.isoformat(),
+            last_message_at=conv.last_message_at.isoformat(),
+        ))
+    return summaries
+
+
+@router.get("/conversation/{conversation_id}", response_model=ConversationDetail)
+async def get_conversation(conversation_id: int, db: DbSession):
+    """Load a full conversation with all messages."""
+    result = await db.execute(
+        select(Conversation)
+        .options(selectinload(Conversation.messages))
+        .where(Conversation.id == conversation_id)
+    )
+    conv = result.scalar_one()
+    return ConversationDetail(
+        id=conv.id,
+        mode=conv.mode,
+        channel=conv.channel,
+        messages=[MessageResponse(role=m.role, content=m.content) for m in conv.messages],
+    )
 
 
 @router.post("/send", response_model=ChatResponse)
@@ -75,6 +148,11 @@ async def send_message(req: ChatRequest, db: DbSession):
         content=response_text,
     )
     db.add(assistant_msg)
+
+    # Update conversation timestamp
+    from datetime import datetime, timezone
+    conversation.last_message_at = datetime.now(timezone.utc)
+
     await db.commit()
 
     return ChatResponse(

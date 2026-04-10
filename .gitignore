@@ -7,3 +7,10 @@ node_modules/
 dist/
 *.egg-info/
 .ruff_cache/
+.claude/
+temp/Screenshot*
+*.swp
+*.swo
+.DS_Store
+.idea/
+.vscode/
