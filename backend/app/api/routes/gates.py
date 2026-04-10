@@ -6,6 +6,11 @@ from sqlalchemy import select
 
 from app.api.deps import DbSession
 from app.engine.mentor import MentorEngine
+from app.engine.progress_tracker import (
+    compute_mastery_score,
+    update_streak,
+    update_strengths_weaknesses,
+)
 from app.models.curriculum import CurriculumWeek
 from app.models.progress import WeekProgress
 from app.models.user import LearnerState
@@ -82,6 +87,11 @@ async def attempt_gate(req: GateAttemptRequest, db: DbSession):
         progress.status = "gate_pending"
         # Adjust adaptive difficulty downward on fail
         state.adaptive_difficulty = max(0.0, state.adaptive_difficulty - 0.05)
+
+    # Update progress tracking
+    update_streak(state)
+    state.overall_mastery_score = await compute_mastery_score(db, req.user_id)
+    await update_strengths_weaknesses(db, state)
 
     await db.commit()
 

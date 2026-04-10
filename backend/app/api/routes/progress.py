@@ -1,14 +1,20 @@
+import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from app.api.deps import DbSession
+from app.engine.mentor import MentorEngine
+from app.engine.progress_tracker import compute_study_velocity, update_streak
+from app.models.curriculum import CurriculumWeek
 from app.models.progress import WeekProgress
 from app.models.user import LearnerState
 
 router = APIRouter()
+
+engine = MentorEngine()
 
 
 class ProgressResponse(BaseModel):
@@ -68,7 +74,7 @@ async def start_week(user_id: int, week_number: int, db: DbSession):
     # Update learner state
     state = await db.scalar(select(LearnerState).where(LearnerState.user_id == user_id))
     state.current_week = week_number
-    state.last_active_at = datetime.now(timezone.utc)
+    update_streak(state)
 
     await db.commit()
     return {"status": "started", "week": week_number}
@@ -78,7 +84,7 @@ async def start_week(user_id: int, week_number: int, db: DbSession):
 async def log_study_time(user_id: int, minutes: int, db: DbSession):
     """Log study time for the current week."""
     state = await db.scalar(select(LearnerState).where(LearnerState.user_id == user_id))
-    state.last_active_at = datetime.now(timezone.utc)
+    update_streak(state)
 
     progress = await db.scalar(
         select(WeekProgress).where(
@@ -89,5 +95,127 @@ async def log_study_time(user_id: int, minutes: int, db: DbSession):
     if progress:
         progress.time_spent_minutes += minutes
 
+    state.study_velocity = await compute_study_velocity(db, user_id)
+
     await db.commit()
     return {"logged": minutes}
+
+
+# --- Artifact endpoints ---
+
+class ArtifactSubmission(BaseModel):
+    url: str
+    description: str = ""
+
+
+class ArtifactReviewResponse(BaseModel):
+    feedback: str
+    artifact_status: str
+
+
+class ArtifactStatusResponse(BaseModel):
+    artifact_status: str
+    artifact_url: str | None
+    artifact_feedback: dict
+
+    model_config = {"from_attributes": True}
+
+
+@router.get("/{user_id}/weeks/{week_number}/artifact", response_model=ArtifactStatusResponse)
+async def get_artifact_status(user_id: int, week_number: int, db: DbSession):
+    week = await db.scalar(
+        select(CurriculumWeek).where(CurriculumWeek.week_number == week_number)
+    )
+    if not week:
+        raise HTTPException(status_code=404, detail="Week not found")
+
+    progress = await db.scalar(
+        select(WeekProgress).where(
+            WeekProgress.user_id == user_id,
+            WeekProgress.week_id == week.id,
+        )
+    )
+    if not progress:
+        return ArtifactStatusResponse(
+            artifact_status="not_started", artifact_url=None, artifact_feedback={}
+        )
+
+    return ArtifactStatusResponse(
+        artifact_status=progress.artifact_status,
+        artifact_url=progress.artifact_url,
+        artifact_feedback=progress.artifact_feedback or {},
+    )
+
+
+@router.post("/{user_id}/weeks/{week_number}/artifact")
+async def submit_artifact(user_id: int, week_number: int, req: ArtifactSubmission, db: DbSession):
+    week = await db.scalar(
+        select(CurriculumWeek).where(CurriculumWeek.week_number == week_number)
+    )
+    if not week:
+        raise HTTPException(status_code=404, detail="Week not found")
+
+    progress = await db.scalar(
+        select(WeekProgress).where(
+            WeekProgress.user_id == user_id,
+            WeekProgress.week_id == week.id,
+        )
+    )
+    if not progress:
+        raise HTTPException(status_code=400, detail="Week not started yet")
+
+    progress.artifact_url = req.url
+    progress.artifact_status = "submitted"
+    progress.artifact_feedback = {"description": req.description} if req.description else {}
+    await db.commit()
+
+    return {"status": "submitted", "artifact_url": req.url}
+
+
+@router.post("/{user_id}/weeks/{week_number}/artifact/review", response_model=ArtifactReviewResponse)
+async def review_artifact(user_id: int, week_number: int, db: DbSession):
+    week = await db.scalar(
+        select(CurriculumWeek).where(CurriculumWeek.week_number == week_number)
+    )
+    if not week:
+        raise HTTPException(status_code=404, detail="Week not found")
+
+    progress = await db.scalar(
+        select(WeekProgress).where(
+            WeekProgress.user_id == user_id,
+            WeekProgress.week_id == week.id,
+        )
+    )
+    if not progress or not progress.artifact_url:
+        raise HTTPException(status_code=400, detail="No artifact submitted")
+
+    state = await db.scalar(select(LearnerState).where(LearnerState.user_id == user_id))
+
+    artifact_spec = json.dumps(week.artifact_spec, indent=2) if week.artifact_spec else "No spec defined"
+    description = (progress.artifact_feedback or {}).get("description", "")
+    message = (
+        f"Review this artifact for Week {week.week_number}: {week.title}.\n\n"
+        f"## Artifact Specification\n{artifact_spec}\n\n"
+        f"## Submitted Artifact\nURL: {progress.artifact_url}\n"
+        + (f"Student's description: {description}\n\n" if description else "\n")
+        + "Provide structured feedback covering: completeness, depth, accuracy, "
+        f"and practicality. Include specific suggestions for improvement."
+    )
+
+    feedback = await engine.respond(
+        mode="artifact_review",
+        message=message,
+        history=[],
+        learner_state=state,
+        db=db,
+        week=week,
+    )
+
+    progress.artifact_feedback = {
+        "review": feedback,
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    progress.artifact_status = "reviewed"
+    await db.commit()
+
+    return ArtifactReviewResponse(feedback=feedback, artifact_status="reviewed")

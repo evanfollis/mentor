@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { logStudyTime } from "@/lib/api";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const USER_ID = 1;
@@ -35,6 +36,27 @@ export default function ChatPage() {
   // Load conversation list on mount
   useEffect(() => {
     loadConversations();
+  }, []);
+
+  // Track study time — log every 5 minutes and on unmount
+  useEffect(() => {
+    let lastLogged = Date.now();
+
+    const interval = setInterval(() => {
+      const minutes = Math.round((Date.now() - lastLogged) / 60000);
+      if (minutes >= 5) {
+        logStudyTime(USER_ID, minutes).catch(() => {});
+        lastLogged = Date.now();
+      }
+    }, 60000); // check every minute
+
+    return () => {
+      clearInterval(interval);
+      const minutes = Math.round((Date.now() - lastLogged) / 60000);
+      if (minutes >= 1) {
+        logStudyTime(USER_ID, minutes).catch(() => {});
+      }
+    };
   }, []);
 
   const loadConversations = async () => {

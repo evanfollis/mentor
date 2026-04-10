@@ -4,6 +4,11 @@ from sqlalchemy import select
 
 from app.api.deps import DbSession
 from app.engine.mentor import MentorEngine
+from app.engine.progress_tracker import (
+    compute_mastery_score,
+    update_streak,
+    update_strengths_weaknesses,
+)
 from app.models.curriculum import CurriculumWeek
 from app.models.progress import QuizAttempt
 from app.models.user import LearnerState
@@ -101,6 +106,11 @@ async def evaluate_answer(req: QuizAnswer, db: DbSession):
                 "count": existing.get(key, {}).get("count", 0) + 1,
             }
         state.misconceptions = existing
+
+    # Update progress tracking
+    update_streak(state)
+    state.overall_mastery_score = await compute_mastery_score(db, req.user_id)
+    await update_strengths_weaknesses(db, state)
 
     await db.commit()
 

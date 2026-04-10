@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.api.routes import auth, chat, curriculum, gates, progress, quiz
+from app.api.routes import auth, cards, chat, curriculum, gates, progress, quiz
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(cards.router, prefix="/api/cards", tags=["cards"])
 app.include_router(curriculum.router, prefix="/api/curriculum", tags=["curriculum"])
 app.include_router(progress.router, prefix="/api/progress", tags=["progress"])
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])

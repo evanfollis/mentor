@@ -80,6 +80,48 @@ export function evaluateQuiz(data: {
   });
 }
 
+// Cards (Spaced Repetition)
+export function getDueCards(userId: number, limit = 10) {
+  return fetchAPI<{ cards: { id: number; concept: string; question: string }[]; total_due: number }>(
+    `/api/cards/${userId}/due?limit=${limit}`
+  );
+}
+
+export function reviewCard(userId: number, data: { card_id: number; self_score: number }) {
+  return fetchAPI<{ ideal_answer: string; next_review_at: string; interval_days: number; ease_factor: number }>(
+    `/api/cards/${userId}/review`,
+    { method: "POST", body: JSON.stringify(data) }
+  );
+}
+
+// Artifacts
+export function submitArtifact(userId: number, weekNumber: number, data: { url: string; description?: string }) {
+  return fetchAPI(`/api/progress/${userId}/weeks/${weekNumber}/artifact`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function reviewArtifact(userId: number, weekNumber: number) {
+  return fetchAPI<{ feedback: string; artifact_status: string }>(
+    `/api/progress/${userId}/weeks/${weekNumber}/artifact/review`,
+    { method: "POST" }
+  );
+}
+
+export function getArtifactStatus(userId: number, weekNumber: number) {
+  return fetchAPI<{ artifact_status: string; artifact_url: string | null; artifact_feedback: Record<string, unknown> }>(
+    `/api/progress/${userId}/weeks/${weekNumber}/artifact`
+  );
+}
+
+// Study Time
+export function logStudyTime(userId: number, minutes: number) {
+  return fetchAPI(`/api/progress/${userId}/log-time?minutes=${minutes}`, {
+    method: "POST",
+  });
+}
+
 // Gates
 export function getGateQuestions(userId: number, weekNumber: number) {
   return fetchAPI(`/api/gates/${userId}/${weekNumber}/questions`);

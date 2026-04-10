@@ -102,7 +102,7 @@ export default function DashboardPage() {
         </div>
       ))}
 
-      <div style={{ marginTop: "2rem", display: "flex", gap: "1rem" }}>
+      <div style={{ marginTop: "2rem", display: "flex", gap: "1rem", flexWrap: "wrap" }}>
         <Link
           href="/chat"
           style={{
@@ -114,6 +114,17 @@ export default function DashboardPage() {
           }}
         >
           Start Study Session
+        </Link>
+        <Link
+          href="/cards"
+          style={{
+            padding: "0.8rem 1.5rem",
+            background: "var(--bg-card)",
+            border: "1px solid var(--border)",
+            borderRadius: "6px",
+          }}
+        >
+          Review Cards
         </Link>
         <Link
           href="/gate-review"

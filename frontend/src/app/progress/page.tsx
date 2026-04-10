@@ -159,6 +159,21 @@ export default function ProgressPage() {
                       Start
                     </button>
                   )}
+                  {(status === "in_progress" || status === "gate_pending" || status === "completed") && (
+                    <Link
+                      href={`/artifact?week=${week.week_number}`}
+                      style={{
+                        padding: "0.3rem 0.8rem",
+                        background: "var(--bg-card)",
+                        border: `1px solid ${wp?.artifact_status === "reviewed" ? "var(--success)" : "var(--border)"}`,
+                        borderRadius: "4px",
+                        fontSize: "0.8rem",
+                        color: wp?.artifact_status === "reviewed" ? "var(--success)" : "var(--text-primary)",
+                      }}
+                    >
+                      Artifact
+                    </Link>
+                  )}
                   {(status === "gate_pending" || (status === "in_progress" && isCurrent)) && (
                     <Link
                       href={`/gate-review?week=${week.week_number}`}
