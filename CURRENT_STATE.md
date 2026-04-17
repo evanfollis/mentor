@@ -5,16 +5,19 @@
 > **Accuracy over completeness.** A short honest file is worth more than a
 > long stale one. If you don't know something, say "unknown" — don't omit it.
 
-**Last updated**: 2026-04-17T19:09:40Z — executive attended session creating missing front door from repo evidence only
+**Last updated**: 2026-04-17T19:30Z — mentor session verified deployed commit from host evidence
 
 ---
 
 ## Deployed / running state
 
-- Repo docs (`README.md`, `CLAUDE.md`) claim a Docker Compose deployment on Hetzner behind Cloudflare Tunnel.
-- Documented public URLs: `mentor.synaplex.ai` (frontend) and `api.synaplex.ai` (backend).
-- Local run contract in the repo is `docker compose up --build -d`, then `python -m app.seed.parse_curriculum` inside the backend container.
-- The currently deployed commit is unknown from this repo alone.
+- **Deployed repo**: `/opt/mentor/` — HEAD is `28bdee1` ("updated .env and .env.example to include SLACK_API_TOKEN").
+- **Deployed repo has a dirty working tree.** Uncommitted changes to `backend/Dockerfile`, `backend/app/api/routes/chat.py`, `gates.py`, `backend/app/config.py`, `backend/app/main.py`, `backend/app/models/conversation.py`, `backend/pyproject.toml`, `docker-compose.yml`, `frontend/src/app/chat/page.tsx`; untracked files for `slack_bot.py`, `daily_agenda.py`, `spaced_rep_scheduler.py`, `gate-review/`, `progress/`. The running containers were built from this dirty tree.
+- **Containers created**: 2026-04-10T01:35Z. All four containers (backend, frontend, db, redis) are up ~7 days.
+- **Dev repo is 3 commits ahead of deployed**: `432eff2` (Complete MVP), `2c144d6` (Wire up spaced rep), `47f4fab` (Add current-state front door). Plus the dev repo has its own uncommitted working tree changes.
+- **The deployed build includes MVP-era code as uncommitted changes**, not as committed history. The deployed repo never received the `432eff2` or later commits.
+- Public URLs: `mentor.synaplex.ai` (frontend), `api.synaplex.ai` (backend).
+- Docker image has no git-SHA label; deployed commit was determined from `/opt/mentor/.git` HEAD.
 
 ## What's in progress
 
