@@ -3,7 +3,8 @@ FROM python:3.12-slim
 WORKDIR /app
 
 COPY pyproject.toml .
-RUN pip install --no-cache-dir -e .
+COPY app/__init__.py app/__init__.py
+RUN pip install --no-cache-dir .
 
 COPY . .
 

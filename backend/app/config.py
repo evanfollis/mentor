@@ -5,6 +5,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://mentor:mentor_dev@localhost:5432/mentor"
     redis_url: str = "redis://localhost:6379/0"
     anthropic_api_key: str = ""
+    slack_api_token: str = ""
     slack_bot_token: str = ""
     slack_signing_secret: str = ""
 

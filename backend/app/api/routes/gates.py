@@ -74,6 +74,10 @@ async def attempt_gate(req: GateAttemptRequest, db: DbSession):
 
         # Adjust adaptive difficulty upward on pass
         state.adaptive_difficulty = min(1.0, state.adaptive_difficulty + 0.05)
+
+        # Generate spaced repetition cards for the completed week
+        from app.scheduler.spaced_rep_scheduler import generate_week_concept_cards
+        await generate_week_concept_cards(db, req.user_id, week, state)
     else:
         progress.status = "gate_pending"
         # Adjust adaptive difficulty downward on fail
