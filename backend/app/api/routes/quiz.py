@@ -9,6 +9,13 @@ from app.engine.progress_tracker import (
     update_streak,
     update_strengths_weaknesses,
 )
+from app.engine.session_store import (
+    append_session_event,
+    get_or_create_learning_session,
+    record_artifact,
+    record_outcome,
+    update_reentry_snapshot,
+)
 from app.models.curriculum import CurriculumWeek
 from app.models.progress import QuizAttempt
 from app.models.user import LearnerState
@@ -54,12 +61,44 @@ async def generate_quiz(req: QuizRequest, db: DbSession):
     week = await db.scalar(
         select(CurriculumWeek).where(CurriculumWeek.week_number == week_num)
     )
+    session = await get_or_create_learning_session(
+        db,
+        user_id=req.user_id,
+        session_type="quiz",
+        channel="system",
+        mode=req.question_type,
+        goal=f"Practice and assess week {week_num} concepts",
+        week_id=week.id,
+    )
 
     question = await engine.generate_quiz(
         week=week,
         learner_state=state,
         question_type=req.question_type,
     )
+    await append_session_event(
+        db,
+        session,
+        event_type="artifact_created",
+        actor="assistant",
+        summary=f"Generated {req.question_type} question for week {week_num}",
+        payload={"question_type": req.question_type, "question": question},
+    )
+    await record_artifact(
+        db,
+        session,
+        artifact_type="quiz_question",
+        title=f"Week {week_num} {req.question_type}",
+        summary=question,
+        payload={"question": question, "difficulty": state.adaptive_difficulty},
+    )
+    await update_reentry_snapshot(
+        session,
+        current_thesis=f"Assess current understanding of week {week_num}.",
+        next_action="Evaluate the learner's answer to the generated question.",
+        relevant_artifacts=[f"Question: {question[:80]}"],
+    )
+    await db.commit()
 
     return QuizQuestion(
         question=question,
@@ -75,6 +114,23 @@ async def evaluate_answer(req: QuizAnswer, db: DbSession):
 
     week = await db.scalar(
         select(CurriculumWeek).where(CurriculumWeek.week_number == req.week_number)
+    )
+    session = await get_or_create_learning_session(
+        db,
+        user_id=req.user_id,
+        session_type="quiz",
+        channel="system",
+        mode=req.question_type,
+        goal=f"Practice and assess week {req.week_number} concepts",
+        week_id=week.id,
+    )
+    await append_session_event(
+        db,
+        session,
+        event_type="user_input",
+        actor="user",
+        summary=req.answer,
+        payload={"question": req.question, "question_type": req.question_type},
     )
 
     evaluation = await engine.evaluate_quiz_answer(
@@ -111,6 +167,28 @@ async def evaluate_answer(req: QuizAnswer, db: DbSession):
     update_streak(state)
     state.overall_mastery_score = await compute_mastery_score(db, req.user_id)
     await update_strengths_weaknesses(db, state)
+    await append_session_event(
+        db,
+        session,
+        event_type="outcome_recorded",
+        actor="assistant",
+        summary=evaluation["feedback"],
+        payload=evaluation,
+    )
+    await record_outcome(
+        db,
+        session,
+        outcome_type="quiz_evaluation",
+        summary=evaluation["feedback"],
+        payload=evaluation,
+        confidence=evaluation["score"],
+    )
+    await update_reentry_snapshot(
+        session,
+        current_thesis=f"Calibrate understanding for week {req.week_number}.",
+        next_action="Address misconceptions or generate the next question.",
+        unresolved_outcomes=evaluation.get("misconceptions", []),
+    )
 
     await db.commit()
 

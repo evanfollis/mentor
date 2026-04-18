@@ -7,6 +7,12 @@ from sqlalchemy import func, select
 from app.api.deps import DbSession
 from app.engine.progress_tracker import update_streak
 from app.engine.spaced_repetition import get_due_cards, sm2_update
+from app.engine.session_store import (
+    append_session_event,
+    get_or_create_learning_session,
+    record_outcome,
+    update_reentry_snapshot,
+)
 from app.models.progress import ConceptCard
 from app.models.user import LearnerState
 
@@ -71,6 +77,35 @@ async def review_card(user_id: int, req: CardReviewRequest, db: DbSession):
     state = await db.scalar(select(LearnerState).where(LearnerState.user_id == user_id))
     if state:
         update_streak(state)
+        session = await get_or_create_learning_session(
+            db,
+            user_id=user_id,
+            session_type="spaced_repetition",
+            channel="system",
+            mode="spaced_repetition",
+            goal=f"Review due concept cards for week {card.week_id}",
+            week_id=card.week_id,
+        )
+        await append_session_event(
+            db,
+            session,
+            event_type="outcome_recorded",
+            actor="user",
+            summary=f"Reviewed card '{card.concept}' with self-score {req.self_score}",
+            payload={"card_id": card.id, "concept": card.concept, "self_score": req.self_score},
+        )
+        await record_outcome(
+            db,
+            session,
+            outcome_type="card_review",
+            summary=f"Reviewed concept card '{card.concept}'",
+            payload={"next_review_at": card.next_review_at.isoformat(), "self_score": req.self_score},
+        )
+        await update_reentry_snapshot(
+            session,
+            current_thesis=f"Reinforce retention for concept '{card.concept}'.",
+            next_action="Continue reviewing due cards until none remain.",
+        )
 
     await db.commit()
 

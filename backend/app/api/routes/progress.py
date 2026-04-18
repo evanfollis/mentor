@@ -8,6 +8,13 @@ from sqlalchemy import select
 from app.api.deps import DbSession
 from app.engine.mentor import MentorEngine
 from app.engine.progress_tracker import compute_study_velocity, update_streak
+from app.engine.session_store import (
+    append_session_event,
+    get_or_create_learning_session,
+    record_artifact,
+    record_outcome,
+    update_reentry_snapshot,
+)
 from app.models.curriculum import CurriculumWeek
 from app.models.progress import WeekProgress
 from app.models.user import LearnerState
@@ -75,6 +82,28 @@ async def start_week(user_id: int, week_number: int, db: DbSession):
     state = await db.scalar(select(LearnerState).where(LearnerState.user_id == user_id))
     state.current_week = week_number
     update_streak(state)
+    session = await get_or_create_learning_session(
+        db,
+        user_id=user_id,
+        session_type="week_progress",
+        channel="system",
+        mode="week_progress",
+        goal=f"Complete week {week_number}: {week.title}",
+        week_id=week.id,
+    )
+    await append_session_event(
+        db,
+        session,
+        event_type="observation",
+        actor="system",
+        summary=f"Started week {week_number}",
+        payload={"week_number": week_number, "title": week.title},
+    )
+    await update_reentry_snapshot(
+        session,
+        current_thesis=f"Work through week {week_number}: {week.title}",
+        next_action="Study the material and produce the required artifact.",
+    )
 
     await db.commit()
     return {"status": "started", "week": week_number}
@@ -94,6 +123,30 @@ async def log_study_time(user_id: int, minutes: int, db: DbSession):
     )
     if progress:
         progress.time_spent_minutes += minutes
+        session = await get_or_create_learning_session(
+            db,
+            user_id=user_id,
+            session_type="week_progress",
+            channel="system",
+            mode="week_progress",
+            goal=f"Complete week {state.current_week}",
+            week_id=progress.week_id,
+        )
+        await append_session_event(
+            db,
+            session,
+            event_type="observation",
+            actor="user",
+            summary=f"Logged {minutes} study minutes",
+            payload={"minutes": minutes},
+        )
+        await record_outcome(
+            db,
+            session,
+            outcome_type="study_time_logged",
+            summary=f"Logged {minutes} study minutes",
+            payload={"minutes": minutes},
+        )
 
     state.study_velocity = await compute_study_velocity(db, user_id)
 
@@ -167,6 +220,38 @@ async def submit_artifact(user_id: int, week_number: int, req: ArtifactSubmissio
     progress.artifact_url = req.url
     progress.artifact_status = "submitted"
     progress.artifact_feedback = {"description": req.description} if req.description else {}
+    session = await get_or_create_learning_session(
+        db,
+        user_id=user_id,
+        session_type="artifact_review",
+        channel="system",
+        mode="artifact_review",
+        goal=f"Submit and review the artifact for week {week_number}",
+        week_id=week.id,
+    )
+    await append_session_event(
+        db,
+        session,
+        event_type="artifact_created",
+        actor="user",
+        summary=f"Submitted artifact for week {week_number}",
+        payload={"url": req.url, "description": req.description},
+    )
+    await record_artifact(
+        db,
+        session,
+        artifact_type="submitted_artifact",
+        title=f"Week {week_number} artifact",
+        storage_pointer=req.url,
+        summary=req.description,
+        payload={"week_number": week_number},
+    )
+    await update_reentry_snapshot(
+        session,
+        current_thesis=f"Review artifact submission for week {week_number}.",
+        next_action="Generate structured feedback for the submitted artifact.",
+        relevant_artifacts=[req.url],
+    )
     await db.commit()
 
     return {"status": "submitted", "artifact_url": req.url}
@@ -210,12 +295,42 @@ async def review_artifact(user_id: int, week_number: int, db: DbSession):
         db=db,
         week=week,
     )
+    session = await get_or_create_learning_session(
+        db,
+        user_id=user_id,
+        session_type="artifact_review",
+        channel="system",
+        mode="artifact_review",
+        goal=f"Submit and review the artifact for week {week_number}",
+        week_id=week.id,
+    )
 
     progress.artifact_feedback = {
         "review": feedback,
         "reviewed_at": datetime.now(timezone.utc).isoformat(),
     }
     progress.artifact_status = "reviewed"
+    await append_session_event(
+        db,
+        session,
+        event_type="review_attached",
+        actor="assistant",
+        summary="Artifact review completed",
+        payload={"feedback": feedback},
+    )
+    await record_outcome(
+        db,
+        session,
+        outcome_type="artifact_review",
+        summary="Artifact reviewed",
+        payload={"feedback": feedback},
+    )
+    await update_reentry_snapshot(
+        session,
+        current_thesis=f"Artifact for week {week_number} has been reviewed.",
+        next_action="Revise the artifact or move to gate preparation.",
+        unresolved_outcomes=["Artifact revisions may still be needed"],
+    )
     await db.commit()
 
     return ArtifactReviewResponse(feedback=feedback, artifact_status="reviewed")

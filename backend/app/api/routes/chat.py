@@ -6,6 +6,12 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import DbSession
 from app.engine.mentor import MentorEngine
+from app.engine.session_store import (
+    append_session_event,
+    build_context_package,
+    get_or_create_learning_session,
+    update_reentry_snapshot,
+)
 from app.models.conversation import Conversation, Message
 from app.models.user import LearnerState
 
@@ -123,6 +129,23 @@ async def send_message(req: ChatRequest, db: DbSession):
 
     # Get learner state for context
     state = await db.scalar(select(LearnerState).where(LearnerState.user_id == req.user_id))
+    session = await get_or_create_learning_session(
+        db,
+        user_id=req.user_id,
+        session_type="conversation",
+        channel=conversation.channel,
+        mode=req.mode,
+        goal=f"Support mentor {req.mode} interaction",
+        legacy_conversation_id=conversation.id,
+    )
+    await append_session_event(
+        db,
+        session,
+        event_type="user_input",
+        actor="user",
+        summary=req.message,
+        payload={"conversation_id": conversation.id},
+    )
 
     # Get conversation history
     result = await db.execute(
@@ -132,6 +155,12 @@ async def send_message(req: ChatRequest, db: DbSession):
     )
     history = result.scalars().all()
 
+    context_package = await build_context_package(
+        db,
+        session=session,
+        learner_state=state,
+    )
+
     # Generate response
     response_text = await engine.respond(
         mode=req.mode,
@@ -139,6 +168,7 @@ async def send_message(req: ChatRequest, db: DbSession):
         history=[(m.role, m.content) for m in history[:-1]],  # exclude the just-added message
         learner_state=state,
         db=db,
+        context_package=context_package,
     )
 
     # Save assistant message
@@ -148,6 +178,19 @@ async def send_message(req: ChatRequest, db: DbSession):
         content=response_text,
     )
     db.add(assistant_msg)
+    await append_session_event(
+        db,
+        session,
+        event_type="assistant_response",
+        actor="assistant",
+        summary=response_text,
+        payload={"conversation_id": conversation.id, "mode": req.mode},
+    )
+    await update_reentry_snapshot(
+        session,
+        current_thesis=f"Continue mentor interaction in {req.mode} mode for week {state.current_week if state else 'unknown'}.",
+        next_action="Respond to the learner's most recent question or continue the active learning thread.",
+    )
 
     # Update conversation timestamp
     from datetime import datetime, timezone
@@ -176,6 +219,25 @@ async def stream_message(req: ChatRequest, db: DbSession):
     user_msg = Message(conversation_id=conversation.id, role="user", content=req.message)
     db.add(user_msg)
     await db.commit()
+    session = await get_or_create_learning_session(
+        db,
+        user_id=req.user_id,
+        session_type="conversation",
+        channel=conversation.channel,
+        mode=req.mode,
+        goal=f"Support mentor {req.mode} interaction",
+        legacy_conversation_id=conversation.id,
+    )
+    await append_session_event(
+        db,
+        session,
+        event_type="user_input",
+        actor="user",
+        summary=req.message,
+        payload={"conversation_id": conversation.id},
+    )
+    await db.commit()
+    context_package = await build_context_package(db, session=session, learner_state=state)
 
     async def generate():
         full_response = ""
@@ -185,6 +247,7 @@ async def stream_message(req: ChatRequest, db: DbSession):
             history=[],
             learner_state=state,
             db=db,
+            context_package=context_package,
         ):
             full_response += chunk
             yield f"data: {chunk}\n\n"
@@ -197,6 +260,19 @@ async def stream_message(req: ChatRequest, db: DbSession):
                 content=full_response,
             )
             db.add(assistant_msg)
+            await append_session_event(
+                db,
+                session,
+                event_type="assistant_response",
+                actor="assistant",
+                summary=full_response,
+                payload={"conversation_id": conversation.id, "mode": req.mode},
+            )
+            await update_reentry_snapshot(
+                session,
+                current_thesis=f"Continue mentor interaction in {req.mode} mode for week {state.current_week if state else 'unknown'}.",
+                next_action="Resume the current conversation from the latest learner turn.",
+            )
 
         yield "data: [DONE]\n\n"
 

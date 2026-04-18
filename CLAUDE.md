@@ -39,6 +39,9 @@
 - **API client is centralized.** All fetch calls go through `frontend/src/lib/api.ts`. Don't use raw fetch in components.
 - **Spaced repetition uses SM-2.** The algorithm is implemented in `backend/app/engine/spaced_repetition.py`. Don't substitute or "improve" it.
 - **Current priority: wire up existing backend logic.** Cards, artifacts, and progress tracking have backend implementations that need frontend pages and API routes. See the active plan.
+- **Durable mentor work belongs in learning sessions.** Long-running mentor flows must log session events, artifacts, outcomes, and reentry snapshots outside the prompt window.
+- **Conversation rows are not the whole memory model.** Chat is one specialized session surface; the durable substrate is the learning-session layer.
+- **Repeated confusion and breakthrough patterns are meta signals.** When misconceptions, retries, or unexpectedly strong learning behavior repeat, they should be available for offline synthesis into better teaching design.
 
 ## Deployment
 - Server: Hetzner CPX31 (5.78.185.6)

@@ -11,6 +11,12 @@ from app.engine.progress_tracker import (
     update_streak,
     update_strengths_weaknesses,
 )
+from app.engine.session_store import (
+    append_session_event,
+    get_or_create_learning_session,
+    record_outcome,
+    update_reentry_snapshot,
+)
 from app.models.curriculum import CurriculumWeek
 from app.models.progress import WeekProgress
 from app.models.user import LearnerState
@@ -54,6 +60,23 @@ async def attempt_gate(req: GateAttemptRequest, db: DbSession):
             WeekProgress.week_id == week.id,
         )
     )
+    session = await get_or_create_learning_session(
+        db,
+        user_id=req.user_id,
+        session_type="gate_review",
+        channel="system",
+        mode="gate_review",
+        goal=f"Determine readiness to advance beyond week {req.week_number}",
+        week_id=week.id,
+    )
+    await append_session_event(
+        db,
+        session,
+        event_type="user_input",
+        actor="user",
+        summary=f"Submitted gate answers for week {req.week_number}",
+        payload={"answers": req.answers},
+    )
 
     # Evaluate via Claude
     result = await engine.evaluate_gate(
@@ -92,6 +115,28 @@ async def attempt_gate(req: GateAttemptRequest, db: DbSession):
     update_streak(state)
     state.overall_mastery_score = await compute_mastery_score(db, req.user_id)
     await update_strengths_weaknesses(db, state)
+    await append_session_event(
+        db,
+        session,
+        event_type="outcome_recorded",
+        actor="assistant",
+        summary=result["feedback"],
+        payload=result,
+    )
+    await record_outcome(
+        db,
+        session,
+        outcome_type="gate_result",
+        summary=result["feedback"],
+        payload={"passed": passed, **result},
+        confidence=result["overall_score"],
+    )
+    await update_reentry_snapshot(
+        session,
+        current_thesis=f"Week {req.week_number} gate {'passed' if passed else 'did not pass'}",
+        next_action="Advance to the next week." if passed else "Address weaknesses and retry the gate.",
+        unresolved_outcomes=[] if passed else ["Gate threshold not yet met"],
+    )
 
     await db.commit()
 

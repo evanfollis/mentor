@@ -60,6 +60,36 @@ class MentorEngine:
 
         return "\n".join(context_parts)
 
+    def _format_context_package(self, context_package: dict | None) -> str:
+        if not context_package:
+            return ""
+
+        recent_events = context_package.get("recent_events") or []
+        snapshot = context_package.get("reentry_snapshot") or {}
+        session_goal = context_package.get("session_goal") or ""
+
+        sections: list[str] = []
+        if session_goal:
+            sections.append(f"## Session Goal\n- {session_goal}\n")
+        if recent_events:
+            sections.append("## Recent Session Events\n" + "\n".join(f"- {event}" for event in recent_events) + "\n")
+        if snapshot:
+            thesis = snapshot.get("current_thesis")
+            next_action = snapshot.get("next_action")
+            relevant_artifacts = snapshot.get("relevant_artifacts") or []
+            unresolved_outcomes = snapshot.get("unresolved_outcomes") or []
+            parts = ["## Reentry Snapshot"]
+            if thesis:
+                parts.append(f"- Current thesis: {thesis}")
+            if next_action:
+                parts.append(f"- Next action: {next_action}")
+            for artifact in relevant_artifacts:
+                parts.append(f"- Relevant artifact: {artifact}")
+            for outcome in unresolved_outcomes:
+                parts.append(f"- Unresolved outcome: {outcome}")
+            sections.append("\n".join(parts) + "\n")
+        return "\n".join(sections)
+
     def _select_model(self, mode: str) -> str:
         if mode in ("gate_review", "artifact_review", "checkpoint"):
             return settings.model_evaluation
@@ -73,6 +103,7 @@ class MentorEngine:
         learner_state: LearnerState | None,
         db: AsyncSession,
         week: CurriculumWeek | None = None,
+        context_package: dict | None = None,
     ) -> str:
         # Fetch current week if not provided
         if not week and learner_state:
@@ -83,6 +114,9 @@ class MentorEngine:
             )
 
         system_prompt = self._build_system_prompt(mode, learner_state, week)
+        session_context = self._format_context_package(context_package)
+        if session_context:
+            system_prompt = f"{system_prompt}\n\n{session_context}"
         model = self._select_model(mode)
 
         messages = []
@@ -107,6 +141,7 @@ class MentorEngine:
         learner_state: LearnerState | None,
         db: AsyncSession,
         week: CurriculumWeek | None = None,
+        context_package: dict | None = None,
     ) -> AsyncIterator[str]:
         if not week and learner_state:
             week = await db.scalar(
@@ -116,6 +151,9 @@ class MentorEngine:
             )
 
         system_prompt = self._build_system_prompt(mode, learner_state, week)
+        session_context = self._format_context_package(context_package)
+        if session_context:
+            system_prompt = f"{system_prompt}\n\n{session_context}"
         model = self._select_model(mode)
 
         messages = []

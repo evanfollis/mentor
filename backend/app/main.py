@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.api.routes import auth, cards, chat, curriculum, gates, progress, quiz
+from app.telemetry import emit_telemetry
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +18,22 @@ async def lifespan(app: FastAPI):
     from app.scheduler.daily_agenda import start_scheduler
     scheduler_task = asyncio.create_task(start_scheduler())
     logger.info("Scheduler started")
+    emit_telemetry(
+        project="mentor",
+        source="mentor.app",
+        event_type="app.startup",
+        level="info",
+        details={"debug": settings.debug},
+    )
     yield
     # Shutdown
     scheduler_task.cancel()
+    emit_telemetry(
+        project="mentor",
+        source="mentor.app",
+        event_type="app.shutdown",
+        level="info",
+    )
 
 
 app = FastAPI(
